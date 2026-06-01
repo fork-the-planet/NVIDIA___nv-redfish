@@ -34,6 +34,8 @@ use nv_redfish_core::ActionError;
 use nv_redfish_core::Bmc as NvRedfishBmc;
 use nv_redfish_core::EntityTypeRef;
 use nv_redfish_core::Expandable;
+#[cfg(feature = "update-service-deprecated")]
+use nv_redfish_core::HttpPushUriUpdateRequest;
 use nv_redfish_core::ModificationResponse;
 use nv_redfish_core::MultipartUpdateRequest;
 use nv_redfish_core::ODataETag;
@@ -60,6 +62,8 @@ pub enum Error {
     UnexpectedDelete(ODataId, ExpectedRequest),
     UnexpectedAction(ActionTarget, String, ExpectedRequest),
     UnexpectedMultipartUpdate(String, String, String, ExpectedRequest),
+    #[cfg(feature = "update-service-deprecated")]
+    UnexpectedHttpPushUriUpdate(String, ExpectedRequest),
     UnexpectedStream(String, ExpectedRequest),
 }
 
@@ -110,6 +114,13 @@ impl Display for Error {
                 write!(
                     f,
                     "unexpected multipart update: {uri}; json: {json}; file: {file}; expected: {expected:?}"
+                )
+            }
+            #[cfg(feature = "update-service-deprecated")]
+            Self::UnexpectedHttpPushUriUpdate(uri, expected) => {
+                write!(
+                    f,
+                    "unexpected HttpPushUri update: {uri}; expected: {expected:?}"
                 )
             }
             Self::UnexpectedStream(uri, expected) => {
@@ -417,6 +428,39 @@ where
                 in_uri.to_string(),
                 in_request.to_string(),
                 file_name,
+                expect.request,
+            )),
+        }
+    }
+
+    #[cfg(feature = "update-service-deprecated")]
+    async fn http_push_uri_update<U, R>(
+        &self,
+        in_uri: &str,
+        _update_request: HttpPushUriUpdateRequest<U>,
+    ) -> Result<ModificationResponse<R>, Self::Error>
+    where
+        U: UploadReader,
+        R: Send + Sync + for<'de> serde::Deserialize<'de>,
+    {
+        let expect = self
+            .expect
+            .lock()
+            .map_err(Error::mutex_lock)?
+            .pop_front()
+            .ok_or(Error::NothingIsExpected)?;
+
+        match expect {
+            Expect {
+                request: ExpectedRequest::HttpPushUriUpdate { uri },
+                response,
+            } if uri == *in_uri => {
+                let response = response.map_err(|err| Error::ErrorResponse(Box::new(err)))?;
+                let result: R = from_value(response).map_err(Error::BadResponseJson)?;
+                Ok(ModificationResponse::Entity(result))
+            }
+            _ => Err(Error::UnexpectedHttpPushUriUpdate(
+                in_uri.to_string(),
                 expect.request,
             )),
         }
