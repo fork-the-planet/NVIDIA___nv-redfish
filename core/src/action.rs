@@ -56,7 +56,10 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::marker::PhantomData;
 
-/// Type for the `target` field of an Action.
+/// URI reference for the `target` field of an action.
+///
+/// The [`Bmc`] implementation resolves this value when the action is run and
+/// may reject values that violate its outbound request policy before transport.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct ActionTarget(String);
@@ -66,6 +69,12 @@ impl ActionTarget {
     #[must_use]
     pub const fn new(v: String) -> Self {
         Self(v)
+    }
+
+    /// Returns the action target URI reference.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -82,7 +91,7 @@ impl Display for ActionTarget {
 /// `R` is the type for the return value.
 #[derive(Deserialize, Debug)]
 pub struct Action<T, R> {
-    /// Path that is used to trigger the action.
+    /// URI reference used to trigger the action.
     #[serde(rename = "target")]
     pub target: ActionTarget,
     // TODO: we can retrieve constraints on attributes here.
@@ -104,9 +113,13 @@ pub trait ActionError {
 impl<T: Send + Sync + Serialize, R: Send + Sync + Sized + for<'de> Deserialize<'de>> Action<T, R> {
     /// Run specific action with parameters passed as argument.
     ///
+    /// URI-reference resolution and outbound request policy are handled by
+    /// [`Bmc::action`].
+    ///
     /// # Errors
     ///
-    /// Return error if BMC returned error on action.
+    /// Returns an error if the [`Bmc`] implementation rejects the action
+    /// request or if the Redfish service returns an error.
     pub async fn run<B: Bmc>(
         &self,
         bmc: &B,
